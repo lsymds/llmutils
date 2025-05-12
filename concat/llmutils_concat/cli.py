@@ -2,7 +2,6 @@ import click
 import os
 import glob
 import fnmatch
-import pathlib
 
 @click.command()
 @click.argument('paths', nargs=-1, type=click.Path(exists=True))
@@ -100,42 +99,62 @@ def is_path_ignored(path, ignore_patterns=None, gitignore_patterns=None):
 
     rel_path = rel_path.replace(os.sep, '/')
 
+    # Handle explicit ignore patterns
     for pattern in ignore_patterns:
         pattern = pattern.replace(os.sep, '/')
-        if fnmatch.fnmatch(rel_path, pattern):
+        if is_pattern_match(pattern, rel_path):
             return True
 
+    # Handle gitignore patterns
     for pattern in gitignore_patterns:
         if not pattern or pattern.startswith('#'):
             continue
 
         pattern = pattern.replace(os.sep, '/')
-
-        if pattern.endswith('/'):
-            base_pattern = pattern[:-1]
-
-            if fnmatch.fnmatch(rel_path, base_pattern):
-                return True
-
-            if any(fnmatch.fnmatch(parent, base_pattern) for parent in get_parent_paths(rel_path)):
-                return True
-
-        elif fnmatch.fnmatch(rel_path, pattern):
+        if is_pattern_match(pattern, rel_path):
             return True
-
-        elif '/' not in pattern:
-            path_parts = rel_path.split('/')
-            for part in path_parts:
-                if fnmatch.fnmatch(part, pattern):
-                    return True
 
     return False
 
-def get_parent_paths(path):
-    parts = path.split('/')
-    parents = []
+def is_pattern_match(pattern, path):
+    """Check if a path matches a pattern according to gitignore rules."""
+    # Exact match
+    if fnmatch.fnmatch(path, pattern):
+        return True
 
-    for i in range(1, len(parts)):
-        parents.append('/'.join(parts[:i]))
+    # Directory pattern (ends with '/')
+    if pattern.endswith('/'):
+        base_pattern = pattern[:-1]
+        # Match the exact directory
+        if fnmatch.fnmatch(path, base_pattern):
+            return True
+        # Match if path is inside this directory
+        if path.startswith(f"{base_pattern}/"):
+            return True
 
-    return parents
+    # Pattern without slash matches anywhere in path
+    if '/' not in pattern:
+        basename = os.path.basename(path)
+        if fnmatch.fnmatch(basename, pattern):
+            return True
+
+        # Check each path component
+        path_parts = path.split('/')
+        for part in path_parts:
+            if fnmatch.fnmatch(part, pattern):
+                return True
+
+    # Handle patterns like '[Oo]bj/' that should match any path component
+    if pattern.endswith('/'):
+        base_pattern = pattern[:-1]
+        path_parts = path.split('/')
+
+        # Check if any directory component matches the pattern
+        for i in range(len(path_parts)):
+            if fnmatch.fnmatch(path_parts[i], base_pattern):
+                # If this is the last component and it's a file, don't match
+                if i == len(path_parts) - 1 and not os.path.isdir(path):
+                    continue
+                return True
+
+    return False
